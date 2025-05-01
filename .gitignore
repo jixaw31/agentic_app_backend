@@ -1,0 +1,10 @@
+# Virtual environment
+.venv/
+
+.env
+
+test.ipynb
+
+.ipynb_checkpoints
+
+__pycache__
