@@ -4,7 +4,13 @@
 .env
 
 test.ipynb
+test_1.ipynb
+
+conversations_db
+
+uploaded_files
 
 .ipynb_checkpoints
 
 __pycache__
+

@@ -1,11 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from models import *
 from typing import Dict, List
-from agents import agents_db
 from dotenv import load_dotenv
 from langchain_deepseek import ChatDeepSeek
 from langchain_core.prompts import ChatPromptTemplate
 import os
+from typing import Annotated
+from sqlmodel import select
+from sql_models import AgentCreate, ConversationCreate
+from persistDB import SessionDep
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, ToolMessage, AIMessage
+from graph import stream_graph_updates, graph
 
 load_dotenv() 
 
@@ -28,83 +33,89 @@ llm = ChatDeepSeek(
 def generate_response_calc_token(input_:str, agent: Agent, history: List[Message]):
     prompt = ChatPromptTemplate.from_messages(
     [
-        (
-            "system",
-            agent.systemPrompt,
-        ),
+        ("system", agent.systemPrompt),
         ("human", "{input}"),
     ]
     )
-
     chain = prompt | llm
-
     res = chain.invoke(
-        {
-            "input": input_,
-        }
+        {"input": input_}
     )
     return res.content,\
            res.response_metadata['token_usage']['completion_tokens'],\
            res.response_metadata['token_usage']['prompt_tokens']
 
 
-# def get_tokens(text: str) -> int:
-#     return max(1, int(len(text.split()) / 0.75))  # Rough estimate
-
-# def generate_response(agent: Agent, history: List[Message], user_input: str) -> str:
-
-#     return f"{agent.name} says: how can I help with: {user_input}'."
-
 
 @router.post("/", response_model=Conversation)
-def start_conversation(request: NewConversationRequest):
-    if request.agent_id not in agents_db:
-        raise HTTPException(status_code=404, detail="Agent not found")
+def start_conversation(request: NewConversationRequest, session: SessionDep):
+    agent = session.get(AgentCreate, request.agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Hero not found")
+    
+    convo = ConversationCreate(agent_id=request.agent_id,
+                               total_tokens=0)
+    
+    conv_config = {"configurable": {"thread_id": convo.id}}
 
-    convo = Conversation(agent_id=request.agent_id)
-    welcome = agents_db[request.agent_id].welcomeMessage
-    welcome_message = Message(
-        sender="assistant",
-        text=welcome,
-        tokens= 0 # hard coded, since we pass the welcome message.
+    system_message = [SystemMessage(content = agent.systemPrompt)]
+    graph.update_state(
+        conv_config,
+        {"messages": system_message},
     )
-    convo.messages.append(welcome_message)
-    conversations_db[convo.id] = convo
+
+    # updating graph with AI welcome message
+    welcome_message = [AIMessage(content = agent.welcomeMessage)]
+
+    graph.update_state(
+        conv_config,
+        {"messages": welcome_message},
+    )
+    session.add(convo)
+    session.commit()
+    session.refresh(convo)
     return convo
 
-@router.post("/{conversation_id}/message", response_model=Conversation)
-def send_message(conversation_id: str, message: UserMessage):
-    convo = conversations_db.get(conversation_id)
+
+@router.post("/{conversation_id}/message")
+def send_message(conversation_id: str, message:Message, session: SessionDep):
+    
+    convo = session.get(ConversationCreate, conversation_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
-
-    agent = agents_db.get(convo.agent_id)
+    
+    agent = session.get(AgentCreate, convo.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    res_content, completion_tokens, prompt_tokens = generate_response_calc_token(message.text,
-                                                                                 agent,
-                                                                                 convo.messages)
-    # user_tokens = get_tokens(message.text)
-    convo.messages.append(Message(sender="user", text=message.text, tokens=prompt_tokens))
-    convo.total_tokens += prompt_tokens
+    conv_config = {"configurable": {"thread_id": convo.id}}
+    res_content, completion_tokens, prompt_tokens = stream_graph_updates(message.text,
+                                                                         conv_config)
 
-    # response_text = generate_response(agent, convo.messages, message.text)
-    # response_tokens = get_tokens(response_text)
-    convo.messages.append(Message(sender="assistant", text=res_content, tokens=completion_tokens))
+    convo.total_tokens += prompt_tokens
     convo.total_tokens += completion_tokens
 
-    return convo
+    return {"user": (message.text, prompt_tokens), "assistant": (res_content, completion_tokens)}
+
+
+@router.get("/", response_model=List[ConversationCreate])
+def get_all_conversations(session: SessionDep,
+                          offset: int = 0,
+                          limit: Annotated[int, Query(le=100)] = 100
+                          ):
+    conversations = session.exec(select(ConversationCreate).offset(offset).limit(limit)).all()
+    return conversations
 
 @router.get("/{conversation_id}", response_model=Conversation)
-def get_conversation(conversation_id: str):
-    convo = conversations_db.get(conversation_id)
-    if not convo:
+def get_conversation(conversation_id: str, session: SessionDep):
+    conversation = session.get(ConversationCreate, conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return convo
+    return conversation
 
-@router.get("/agent/{agent_id}", response_model=List[Conversation])
-def list_agent_conversations(agent_id: str):
-    if agent_id not in agents_db:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    return [c for c in conversations_db.values() if c.agent_id == agent_id]
+
+# @router.get("/agent/{agent_id}", response_model=List[Conversation])
+# def list_agent_conversations(agent_id: str):
+#     if agent_id not in agents_db:
+#         raise HTTPException(status_code=404, detail="Agent not found")
+#     return [c for c in conversations_db.values() if c.agent_id == agent_id]

@@ -1,49 +1,90 @@
 from fastapi import APIRouter, HTTPException
-from models import Agent, AgentConfig, AgentResponseSettings
-from typing import Dict, List
+from models import Agent, AgentConfig, AgentResponseSettings, ResponseSettings
+from typing import Dict
+# from contextlib import asynccontextmanager
+from typing import Annotated
+from fastapi import HTTPException, Query
+from sqlmodel import select
+from typing import Dict
+
+from persistDB import SessionDep
+from sql_models import AgentCreate
 
 router = APIRouter()
 
-# in memory DB
-agents_db: Dict[str, Agent] = {}
 
-@router.post("/", response_model=Agent)
-def create_agent(agent: Agent):
-    if agent.id in agents_db:
-        raise HTTPException(status_code=400, detail="Agent already exists.")
-    agents_db[agent.id] = agent
+@router.post("/")
+def create_agent(agent: Agent, session: SessionDep) -> Agent:
+    agent_db = AgentCreate(
+        name=agent.name,
+        description=agent.description,
+        welcomeMessage=agent.welcomeMessage,
+        systemPrompt=agent.systemPrompt,
+        tone= agent.responseSettings.tone,
+        verbosity= agent.responseSettings.verbosity,
+        creativity= agent.responseSettings.creativity
+    )
+    session.add(agent_db)
+    session.commit()
+    session.refresh(agent_db)
     return agent
 
-@router.get("/", response_model=List[Agent])
-def list_agents():
-    return list(agents_db.values())
 
-@router.get("/{agent_id}", response_model=Agent)
-def get_agent(agent_id: str):
-    agent = agents_db.get(agent_id)
+
+# @router.get("/", response_model=List[Agent])
+# def list_agents():
+#     return list(agents_db.values())
+
+@router.get("/")
+def list_agents(
+    session: SessionDep,
+    offset: int = 0,
+    limit: Annotated[int, Query(le=100)] = 100,
+) -> list[AgentCreate]:
+    agents = session.exec(select(AgentCreate).offset(offset).limit(limit)).all()
+    return agents
+
+
+@router.get("/{agent_id}", response_model=AgentCreate)
+def get_agent(agent_id: str, session: SessionDep) -> AgentCreate:
+    agent = session.get(AgentCreate, agent_id)
     if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise HTTPException(status_code=404, detail="Hero not found")
     return agent
 
-@router.put("/{agent_id}/system-prompt", response_model=Agent)
-def update_system_prompt(agent_id: str, config: AgentConfig):
-    agent = agents_db.get(agent_id)
+
+@router.put("/{agent_id}/response-settings", response_model=AgentCreate)
+def update_response_settings(agent_id: str, settings: AgentResponseSettings, session: SessionDep):
+    agent = session.get(AgentCreate, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    
+    agent.tone = settings.responseSettings.tone
+    agent.verbosity = settings.responseSettings.verbosity
+    agent.creativity = settings.responseSettings.creativity
+    session.commit()
+    session.refresh(agent)
+    return agent
+
+
+@router.put("/{agent_id}/system-prompt", response_model=AgentCreate)
+def update_system_prompt(agent_id: str, config: AgentConfig, session: SessionDep):
+    agent = session.get(AgentCreate, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
     agent.systemPrompt = config.systemPrompt
+    session.commit()
+    session.refresh(agent)
     return agent
 
-@router.put("/{agent_id}/response-settings", response_model=Agent)
-def update_response_settings(agent_id: str, settings: AgentResponseSettings):
-    agent = agents_db.get(agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    agent.responseSettings = settings.responseSettings
-    return agent
 
 @router.delete("/{agent_id}")
-def delete_agent(agent_id: str):
-    if agent_id not in agents_db:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    del agents_db[agent_id]
-    return {"message": f"Agent {agent_id} deleted successfully."}
+def delete_agent(agent_id: str, session: SessionDep):
+    agent = session.get(AgentCreate, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Hero not found")
+    session.delete(agent)
+    session.commit()
+    return {"message": f"Agent with ID: {agent_id} deleted successfully."}
+
