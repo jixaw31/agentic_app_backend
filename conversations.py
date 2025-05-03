@@ -10,44 +10,20 @@ from sqlmodel import select
 from sql_models import AgentCreate, ConversationCreate
 from persistDB import SessionDep
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, ToolMessage, AIMessage
-from graph import stream_graph_updates, graph
+from graph import stream_graph_updates, create_graph
 
 load_dotenv() 
 
 router = APIRouter()
 
-# in memory db
-conversations_db: Dict[str, Conversation] = {}
+# in memory db we used to use.
+# conversations_db: Dict[str, Conversation] = {}
 
-# LLM logic
-os.environ["DEEPSEEK_API_KEY"] = os.getenv("DEEPSEEK_API_KEY")
+# WE MIGHT BE ABLE TO REMOVE CONVERSATIONS, PERIOD.
 
-llm = ChatDeepSeek(
-    model="deepseek-chat",
-    temperature=0,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
-)
-
-def generate_response_calc_token(input_:str, agent: Agent, history: List[Message]):
-    prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", agent.systemPrompt),
-        ("human", "{input}"),
-    ]
-    )
-    chain = prompt | llm
-    res = chain.invoke(
-        {"input": input_}
-    )
-    return res.content,\
-           res.response_metadata['token_usage']['completion_tokens'],\
-           res.response_metadata['token_usage']['prompt_tokens']
-
-
-
-@router.post("/", response_model=Conversation)
+@router.post("/", response_model=Conversation,
+              description="""To create a conversation,
+                by employing a certain agent.(grabbing agent by ID)""")
 def start_conversation(request: NewConversationRequest, session: SessionDep):
     agent = session.get(AgentCreate, request.agent_id)
     if not agent:
@@ -58,26 +34,32 @@ def start_conversation(request: NewConversationRequest, session: SessionDep):
     
     conv_config = {"configurable": {"thread_id": convo.id}}
 
+    # defining LLM
+    graph = create_graph('test', agent.creativity)
+    
     system_message = [SystemMessage(content = agent.systemPrompt)]
     graph.update_state(
         conv_config,
         {"messages": system_message},
     )
 
-    # updating graph with AI welcome message
     welcome_message = [AIMessage(content = agent.welcomeMessage)]
-
     graph.update_state(
         conv_config,
         {"messages": welcome_message},
     )
+
     session.add(convo)
     session.commit()
     session.refresh(convo)
     return convo
 
 
-@router.post("/{conversation_id}/message")
+@router.post("/{conversation_id}/message", description="""To send messages/human prompts
+                                            to LLM through API and recieve a response.
+                                            we also count prompt and completion tokens
+                                            and store them in conversations table SQLite.
+                                            """)
 def send_message(conversation_id: str, message:Message, session: SessionDep):
     
     convo = session.get(ConversationCreate, conversation_id)
@@ -88,17 +70,34 @@ def send_message(conversation_id: str, message:Message, session: SessionDep):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    graph = create_graph(f'{agent.name}_db', agent.creativity)
     conv_config = {"configurable": {"thread_id": convo.id}}
-    res_content, completion_tokens, prompt_tokens = stream_graph_updates(message.text,
-                                                                         conv_config)
 
-    convo.total_tokens += prompt_tokens
-    convo.total_tokens += completion_tokens
+    res = stream_graph_updates(message.text,
+                               conv_config,
+                               graph)
+    
+    response_content = res['chatbot']['messages'][-1].content
 
-    return {"user": (message.text, prompt_tokens), "assistant": (res_content, completion_tokens)}
+    # saved datetime alongside the message.
+    # dt = res['chatbot']['messages'][-1].additional_kwargs['timestamp'].strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    tokens_usage = res['chatbot']['messages'][-1].additional_kwargs['tokens_usage']
+
+    # we have access to total tokens
+    convo.total_tokens += tokens_usage['prompt_tokens']
+    convo.total_tokens += tokens_usage['completion_tokens']
+
+    return {"user": (message.text, tokens_usage['prompt_tokens']),
+            "assistant": (response_content, tokens_usage['completion_tokens']),
+            "timestamp": message.timestamp}
 
 
-@router.get("/", response_model=List[ConversationCreate])
+@router.get("/", response_model=List[ConversationCreate],
+             description="""NOTE conversations don't store messages,
+             messages are stored in graph SQLiteDB
+             for the sake of memory-aware conversation with LLM.
+             conversation stores associated agent's ID, tokens utilized.""")
 def get_all_conversations(session: SessionDep,
                           offset: int = 0,
                           limit: Annotated[int, Query(le=100)] = 100
@@ -106,7 +105,8 @@ def get_all_conversations(session: SessionDep,
     conversations = session.exec(select(ConversationCreate).offset(offset).limit(limit)).all()
     return conversations
 
-@router.get("/{conversation_id}", response_model=Conversation)
+@router.get("/{conversation_id}", response_model=Conversation,
+            description="To grab a single conversation.")
 def get_conversation(conversation_id: str, session: SessionDep):
     conversation = session.get(ConversationCreate, conversation_id)
     if not conversation:
@@ -114,8 +114,13 @@ def get_conversation(conversation_id: str, session: SessionDep):
     return conversation
 
 
-# @router.get("/agent/{agent_id}", response_model=List[Conversation])
-# def list_agent_conversations(agent_id: str):
-#     if agent_id not in agents_db:
-#         raise HTTPException(status_code=404, detail="Agent not found")
-#     return [c for c in conversations_db.values() if c.agent_id == agent_id]
+
+@router.delete("/{conversation_id}",
+               description="To delete a conversation by its ID.")
+def delete_conversation(conversation_id: str, session: SessionDep):
+    conversation = session.get(ConversationCreate, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    session.delete(conversation)
+    session.commit()
+    return "Conversation deleted."

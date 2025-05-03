@@ -4,7 +4,6 @@ from typing import List, Dict
 from models import FileMeta
 from datetime import datetime
 
-
 UPLOAD_DIR = "uploaded_files"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -13,7 +12,7 @@ router = APIRouter()
 # in memory DB
 files_db: Dict[str, FileMeta] = {}
 
-@router.post("/{conversation_id}/upload", response_model=FileMeta)
+@router.post("/{conversation_id}/upload", response_model=FileMeta, description="To upload files")
 async def upload_file(conversation_id: str, uploaded_file: UploadFile = File(...)):
     file_id = str(uuid.uuid4())
     file_path = os.path.join(UPLOAD_DIR, f"{file_id}_{uploaded_file.filename}")
@@ -32,11 +31,13 @@ async def upload_file(conversation_id: str, uploaded_file: UploadFile = File(...
     files_db[file_id] = meta
     return meta
 
-@router.get("/{conversation_id}/files", response_model=List[FileMeta])
+@router.get("/{conversation_id}/files", response_model=List[FileMeta],
+            description="To get all files associated with a conversation.")
 def list_files_for_conversation(conversation_id: str):
     return [f for f in files_db.values() if f.conversation_id == conversation_id]
 
-@router.get("/file/{file_id}", response_model=FileMeta)
+@router.get("/file/{file_id}", response_model=FileMeta,
+            description="To grab a file by its ID.")
 def get_file_metadata(file_id: str):
     meta = files_db.get(file_id)
     if not meta:

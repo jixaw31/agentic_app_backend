@@ -13,7 +13,7 @@ from sql_models import AgentCreate
 router = APIRouter()
 
 
-@router.post("/")
+@router.post("/", description="To create an agent with certain features.")
 def create_agent(agent: Agent, session: SessionDep) -> Agent:
     agent_db = AgentCreate(
         name=agent.name,
@@ -24,18 +24,14 @@ def create_agent(agent: Agent, session: SessionDep) -> Agent:
         verbosity= agent.responseSettings.verbosity,
         creativity= agent.responseSettings.creativity
     )
+    
     session.add(agent_db)
     session.commit()
     session.refresh(agent_db)
     return agent
 
 
-
-# @router.get("/", response_model=List[Agent])
-# def list_agents():
-#     return list(agents_db.values())
-
-@router.get("/")
+@router.get("/", description="To get a list of all agents.")
 def list_agents(
     session: SessionDep,
     offset: int = 0,
@@ -45,7 +41,7 @@ def list_agents(
     return agents
 
 
-@router.get("/{agent_id}", response_model=AgentCreate)
+@router.get("/{agent_id}", response_model=AgentCreate, description="To get a single agent by ID.")
 def get_agent(agent_id: str, session: SessionDep) -> AgentCreate:
     agent = session.get(AgentCreate, agent_id)
     if not agent:
@@ -53,7 +49,11 @@ def get_agent(agent_id: str, session: SessionDep) -> AgentCreate:
     return agent
 
 
-@router.put("/{agent_id}/response-settings", response_model=AgentCreate)
+@router.put("/{agent_id}/response-settings",
+             response_model=AgentCreate,
+             description="""To update an agent's response settings including
+                            tone, verbosity, and creativity.
+                         """)
 def update_response_settings(agent_id: str, settings: AgentResponseSettings, session: SessionDep):
     agent = session.get(AgentCreate, agent_id)
     if not agent:
@@ -67,7 +67,8 @@ def update_response_settings(agent_id: str, settings: AgentResponseSettings, ses
     return agent
 
 
-@router.put("/{agent_id}/system-prompt", response_model=AgentCreate)
+@router.put("/{agent_id}/system-prompt", response_model=AgentCreate,
+            description="To update/change the agent's system prompt.")
 def update_system_prompt(agent_id: str, config: AgentConfig, session: SessionDep):
     agent = session.get(AgentCreate, agent_id)
     if not agent:
@@ -79,7 +80,7 @@ def update_system_prompt(agent_id: str, config: AgentConfig, session: SessionDep
     return agent
 
 
-@router.delete("/{agent_id}")
+@router.delete("/{agent_id}", description="To delete an agent.")
 def delete_agent(agent_id: str, session: SessionDep):
     agent = session.get(AgentCreate, agent_id)
     if not agent:

@@ -1,9 +1,9 @@
-# Virtual environment
 .venv/
 
 .env
 
 test.ipynb
+
 test_1.ipynb
 
 conversations_db
@@ -15,3 +15,9 @@ uploaded_files
 __pycache__
 
 agents_database.db
+
+AI Requirements for the Solving Center Platform.pdf
+
+test
+
+hero.py
