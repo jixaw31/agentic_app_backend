@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.post("/", description="To create an agent with certain features.")
-def create_agent(agent: Agent, session: SessionDep) -> Agent:
+def create_agent(agent: Agent, session: SessionDep):
     agent_db = AgentCreate(
         name=agent.name,
         description=agent.description,
@@ -28,7 +28,7 @@ def create_agent(agent: Agent, session: SessionDep) -> Agent:
     session.add(agent_db)
     session.commit()
     session.refresh(agent_db)
-    return agent
+    return agent_db
 
 
 @router.get("/", description="To get a list of all agents.")
@@ -88,4 +88,5 @@ def delete_agent(agent_id: str, session: SessionDep):
     session.delete(agent)
     session.commit()
     return {"message": f"Agent with ID: {agent_id} deleted successfully."}
+
 
