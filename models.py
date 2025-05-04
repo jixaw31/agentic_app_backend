@@ -36,9 +36,9 @@ class Agent(AgentBase, AgentConfig, AgentResponseSettings):
 # --------------------
 
 class Message(BaseModel):
-    sender: str  # 'user' or 'assistant'
+    # sender: str  # 'user' or 'assistant'
     text: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class Conversation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

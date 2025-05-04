@@ -16,10 +16,7 @@ load_dotenv()
 
 router = APIRouter()
 
-# in memory db we used to use.
-# conversations_db: Dict[str, Conversation] = {}
-
-# WE MIGHT BE ABLE TO REMOVE CONVERSATIONS, PERIOD.
+graphs = dict()
 
 @router.post("/", response_model=Conversation,
               description="""To create a conversation,
@@ -32,11 +29,15 @@ def start_conversation(request: NewConversationRequest, session: SessionDep):
     convo = ConversationCreate(agent_id=request.agent_id,
                                total_tokens=0)
     
-    conv_config = {"configurable": {"thread_id": convo.id}}
 
-    # defining LLM
-    graph = create_graph('test', agent.creativity)
-    
+    conv_config = {"configurable": {"thread_id": convo.id}}
+    graph = create_graph(f'{agent.name}_db', agent.creativity)
+
+    graphs['1'] = graph
+
+    # graphs[convo.id] = graph
+
+
     system_message = [SystemMessage(content = agent.systemPrompt)]
     graph.update_state(
         conv_config,
@@ -70,8 +71,13 @@ def send_message(conversation_id: str, message:Message, session: SessionDep):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    graph = graphs[conversation_id]
+    if not graph:
+        # fallback or raise
+        raise HTTPException(status_code=500, detail="Graph not found in memory.")
+
+    conv_config = {"configurable": {"thread_id": conversation_id}}
     graph = create_graph(f'{agent.name}_db', agent.creativity)
-    conv_config = {"configurable": {"thread_id": convo.id}}
 
     res = stream_graph_updates(message.text,
                                conv_config,
@@ -80,17 +86,17 @@ def send_message(conversation_id: str, message:Message, session: SessionDep):
     response_content = res['chatbot']['messages'][-1].content
 
     # saved datetime alongside the message.
-    # dt = res['chatbot']['messages'][-1].additional_kwargs['timestamp'].strftime("%Y-%m-%d %H:%M:%S %Z")
+    dt = res['chatbot']['messages'][-1].additional_kwargs['timestamp'].strftime("%Y-%m-%d %H:%M:%S %Z")
 
-    tokens_usage = res['chatbot']['messages'][-1].additional_kwargs['tokens_usage']
-
+    tokens_usage = res['chatbot']['messages'][-1].additional_kwargs['tokens_usage']['token_usage']
+                   
     # we have access to total tokens
     convo.total_tokens += tokens_usage['prompt_tokens']
     convo.total_tokens += tokens_usage['completion_tokens']
 
     return {"user": (message.text, tokens_usage['prompt_tokens']),
             "assistant": (response_content, tokens_usage['completion_tokens']),
-            "timestamp": message.timestamp}
+            "timestamp": dt}
 
 
 @router.get("/", response_model=List[ConversationCreate],
@@ -113,6 +119,25 @@ def get_conversation(conversation_id: str, session: SessionDep):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
 
+@router.get("/{conversation_id}/messages",
+            description="To grab all message of a conversation.")
+def get_conversation_messages(conversation_id: str, session: SessionDep):
+
+    convo = session.get(ConversationCreate, conversation_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    agent = session.get(AgentCreate, convo.agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    conv_config = {"configurable": {"thread_id": conversation_id}}
+    graph = create_graph(f'{agent.name}_db', agent.creativity)
+    
+    snapshot = graph.get_state(conv_config)
+
+    return snapshot.values['messages']
+
 
 
 @router.delete("/{conversation_id}",
@@ -124,3 +149,5 @@ def delete_conversation(conversation_id: str, session: SessionDep):
     session.delete(conversation)
     session.commit()
     return "Conversation deleted."
+
+
