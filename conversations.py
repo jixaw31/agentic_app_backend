@@ -1,153 +1,208 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, Request, HTTPException, Depends, Query
 from models import *
-from typing import Dict, List
 from dotenv import load_dotenv
-from langchain_deepseek import ChatDeepSeek
-from langchain_core.prompts import ChatPromptTemplate
 import os
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from typing import Annotated
 from sqlmodel import select
 from sql_models import AgentCreate, ConversationCreate
-from persistDB import SessionDep
+from persistDB import AsyncSessionDep
+# from persistDB import AsyncSessionDep
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, ToolMessage, AIMessage
-from graph import stream_graph_updates, create_graph
+# from graph import stream_graph_updates, create_graph
+from models import ConversationRead, Conversation
+from test_mcp_1 import create_graph, stream_graph_updates
+
 
 load_dotenv() 
 
 router = APIRouter()
 
-graphs = dict()
 
-@router.post("/", response_model=Conversation,
-              description="""To create a conversation,
-                by employing a certain agent.(grabbing agent by ID)""")
-def start_conversation(request: NewConversationRequest, session: SessionDep):
-    agent = session.get(AgentCreate, request.agent_id)
+@router.post(
+    "/", 
+    response_model=Conversation,  # Make sure this model exists and includes all required fields.
+    description="""To create a conversation, by employing a certain agent (grabbing agent by ID)."""
+)
+async def start_conversation(request: NewConversationRequest, session: AsyncSessionDep,
+                            #  offset: int = 0,
+                            #  limit: Annotated[int, Query(le=100)] = 100,
+                             ):
+    
+    # agent = await session.get(AgentCreate, "acf3c31d-fa74-4f0f-811d-798106681d60")
+    statement = select(AgentCreate).where(AgentCreate.name == "medical agent")
+    results = await session.execute(statement)
+    agent = results.scalars().first()
+
     if not agent:
-        raise HTTPException(status_code=404, detail="Hero not found")
-    
-    convo = ConversationCreate(agent_id=request.agent_id,
-                               total_tokens=0)
-    
+        raise HTTPException(status_code=404, detail="Provide agent ID")
 
+    today = datetime.now().strftime("%A, %B %d, %Y")
+    agent.systemPrompt = f"{agent.systemPrompt}\n\nToday is {today}."
+
+    convo = ConversationCreate(
+        agent_id=agent.id,
+        title=request.title
+    )
+
+    x = '_'.join(convo.title.split(' ')[:3])
+    
     conv_config = {"configurable": {"thread_id": convo.id}}
-    graph = create_graph(f'{agent.name}_db', agent.creativity)
+    
+    system_message = [SystemMessage(content=agent.systemPrompt)]
+    welcome_message = [AIMessage(content=agent.welcomeMessage)]
 
-    graphs['1'] = graph
-
-    # graphs[convo.id] = graph
+    # tools_list = await client.get_tools()
 
 
-    system_message = [SystemMessage(content = agent.systemPrompt)]
-    graph.update_state(
-        conv_config,
-        {"messages": system_message},
-    )
+    async with AsyncPostgresSaver.from_conn_string(os.getenv("DB_URI")) as checkpointer:
 
-    welcome_message = [AIMessage(content = agent.welcomeMessage)]
-    graph.update_state(
-        conv_config,
-        {"messages": welcome_message},
-    )
+        # await checkpointer.setup() # Need to apply only once, and it does it.
+        
+        graph = await create_graph(checkpointer,
+                                    convo.title,
+                                    creativity=agent.creativity,
+                                   )
+    
+        await graph.aupdate_state(conv_config, {"messages": system_message}, as_node="query_or_respond")
+
+        # await graph.aupdate_state(conv_config, {"messages": welcome_message}, as_node="query_or_respond")
 
     session.add(convo)
-    session.commit()
-    session.refresh(convo)
+    await session.commit()
+    await session.refresh(convo)
+    await session.refresh(agent)  
+
     return convo
 
 
+
 @router.post("/{conversation_id}/message", description="""To send messages/human prompts
-                                            to LLM through API and recieve a response.
-                                            we also count prompt and completion tokens
+                                            to LLM through API and receive a response.
+                                            We also count prompt and completion tokens
                                             and store them in conversations table SQLite.
                                             """)
-def send_message(conversation_id: str, message:Message, session: SessionDep):
+async def send_message(conversation_id: str, message: Message, session: AsyncSessionDep,
+                       ):
     
-    convo = session.get(ConversationCreate, conversation_id)
+    convo = await session.get(ConversationCreate, conversation_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    agent = session.get(AgentCreate, convo.agent_id)
+    agent = await session.get(AgentCreate, convo.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    graph = graphs[conversation_id]
-    if not graph:
-        # fallback or raise
-        raise HTTPException(status_code=500, detail="Graph not found in memory.")
-
     conv_config = {"configurable": {"thread_id": conversation_id}}
-    graph = create_graph(f'{agent.name}_db', agent.creativity)
 
-    res = stream_graph_updates(message.text,
-                               conv_config,
-                               graph)
-    
-    response_content = res['chatbot']['messages'][-1].content
+    # tools_list = await client.get_tools()
 
-    # saved datetime alongside the message.
-    dt = res['chatbot']['messages'][-1].additional_kwargs['timestamp'].strftime("%Y-%m-%d %H:%M:%S %Z")
+    async with AsyncPostgresSaver.from_conn_string(os.getenv("DB_URI")) as checkpointer:
+        
+        
+        graph = await create_graph(checkpointer,
+                                    convo.title,
+                                    # tools_list,
+                                    creativity=agent.creativity,
+                                   )
 
-    tokens_usage = res['chatbot']['messages'][-1].additional_kwargs['tokens_usage']['token_usage']
-                   
-    # we have access to total tokens
-    convo.total_tokens += tokens_usage['prompt_tokens']
-    convo.total_tokens += tokens_usage['completion_tokens']
+        if not graph:
+            raise HTTPException(status_code=500, detail="Graph not found in memory.")
 
-    return {"user": (message.text, tokens_usage['prompt_tokens']),
+        res = await stream_graph_updates(message.text, conv_config, graph)
+        print(res)
+    response_content = res['query_or_respond']['messages'][-1].content
+
+    if "Connection issue" in response_content:
+        return {"assistant": response_content}
+    else:
+        dt = res['query_or_respond']['messages'][-1].additional_kwargs['timestamp'].strftime("%Y-%m-%d %H:%M:%S %Z")
+        tokens_usage = res['query_or_respond']['messages'][-1].additional_kwargs['tokens_usage']['token_usage']
+                    
+        convo.total_tokens += tokens_usage['prompt_tokens']
+        convo.total_tokens += tokens_usage['completion_tokens']
+
+        # Save updated total_tokens back to DB
+        session.add(convo)
+        await session.commit()
+
+        return {
+            "user": (message.text, tokens_usage['prompt_tokens']),
             "assistant": (response_content, tokens_usage['completion_tokens']),
-            "timestamp": dt}
+            "timestamp": dt
+        }
 
+    
 
-@router.get("/", response_model=List[ConversationCreate],
+@router.get("/",
              description="""NOTE conversations don't store messages,
              messages are stored in graph SQLiteDB
              for the sake of memory-aware conversation with LLM.
              conversation stores associated agent's ID, tokens utilized.""")
-def get_all_conversations(session: SessionDep,
-                          offset: int = 0,
-                          limit: Annotated[int, Query(le=100)] = 100
-                          ):
-    conversations = session.exec(select(ConversationCreate).offset(offset).limit(limit)).all()
+async def get_all_conversations(session: AsyncSessionDep,
+                                offset: int = 0,
+                                limit: Annotated[int, Query(le=100)] = 100
+                                )-> list[ConversationRead]:
+    
+    results = await session.execute(
+    select(ConversationCreate).order_by(ConversationCreate.created_at.desc())
+    )
+    conversations = results.scalars().all()
+    
     return conversations
+
+
 
 @router.get("/{conversation_id}", response_model=Conversation,
             description="To grab a single conversation.")
-def get_conversation(conversation_id: str, session: SessionDep):
+async def get_conversation(conversation_id: str, session: AsyncSessionDep):
     conversation = session.get(ConversationCreate, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
 
+
 @router.get("/{conversation_id}/messages",
             description="To grab all message of a conversation.")
-def get_conversation_messages(conversation_id: str, session: SessionDep):
+async def get_conversation_messages(conversation_id: str, session: AsyncSessionDep):
 
-    convo = session.get(ConversationCreate, conversation_id)
+    convo = await session.get(ConversationCreate, conversation_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    agent = session.get(AgentCreate, convo.agent_id)
+    agent = await session.get(AgentCreate, convo.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     
     conv_config = {"configurable": {"thread_id": conversation_id}}
-    graph = create_graph(f'{agent.name}_db', agent.creativity)
-    
-    snapshot = graph.get_state(conv_config)
 
-    return snapshot.values['messages']
+    
+
+    async with AsyncPostgresSaver.from_conn_string(os.getenv("DB_URI")) as checkpointer:
+        graph = await create_graph(checkpointer, convo.title, agent.creativity)
+
+        snapshot = await graph.aget_state(conv_config)
+
+        # Filter out messages of type 'system' and 'tool'
+        filtered_messages = [
+            msg for msg in snapshot.values['messages']
+            if msg.type not in ("system", "tool")
+        ]
+
+        return filtered_messages
 
 
 
 @router.delete("/{conversation_id}",
                description="To delete a conversation by its ID.")
-def delete_conversation(conversation_id: str, session: SessionDep):
-    conversation = session.get(ConversationCreate, conversation_id)
+async def delete_conversation(conversation_id: str, session: AsyncSessionDep):
+    conversation = await session.get(ConversationCreate, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    session.delete(conversation)
-    session.commit()
-    return "Conversation deleted."
+    
+    await session.delete(conversation)  # Optional: SQLAlchemy sometimes allows this without await
+    await session.commit()              
+
+    return {"detail": "Conversation deleted."}
 
 

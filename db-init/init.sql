@@ -1,0 +1,2 @@
+CREATE DATABASE myapp;
+CREATE DATABASE myapp_messages;
