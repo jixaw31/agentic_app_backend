@@ -41,6 +41,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",  # Next.js frontend
         "http://127.0.0.1:3000",  # Just in case browser treats this differently
+        "https://nextjs-agentic-app.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
