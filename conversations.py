@@ -55,26 +55,26 @@ async def start_conversation(request: NewConversationRequest, session: AsyncSess
     DB_URI = os.getenv("DB_URI")
 
     # 🧠 Check if 'checkpoints' table exists
-    conn = await asyncpg.connect(dsn=DB_URI)
-    try:
-        exists = await conn.fetchval("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'checkpoints'
-            )
-        """)
-    finally:
-        await conn.close()
+    # conn = await asyncpg.connect(dsn=DB_URI)
+    # try:
+    #     exists = await conn.fetchval("""
+    #         SELECT EXISTS (
+    #             SELECT FROM information_schema.tables 
+    #             WHERE table_name = 'checkpoints'
+    #         )
+    #     """)
+    # finally:
+    #     await conn.close()
 
 
     async with AsyncPostgresSaver.from_conn_string(os.getenv("DB_URI")) as checkpointer:
 
-        # await checkpointer.setup() # Need to apply only once, and it does it.
-        if not exists:
-            await checkpointer.setup()
-            print("✅ 'checkpoints' table created.")
-        else:
-            print("ℹ️ 'checkpoints' table already exists.")
+        await checkpointer.setup() # Need to apply only once, and it does it.
+        # if not exists:
+        #     await checkpointer.setup()
+        #     print("✅ 'checkpoints' table created.")
+        # else:
+        #     print("ℹ️ 'checkpoints' table already exists.")
         
         graph = await create_graph(checkpointer,
                                     convo.title,
