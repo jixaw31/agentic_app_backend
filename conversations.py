@@ -40,9 +40,11 @@ async def start_conversation(request: NewConversationRequest, session: AsyncSess
     today = datetime.now().strftime("%A, %B %d, %Y")
     agent.systemPrompt = f"{agent.systemPrompt}\n\nToday is {today}."
 
+    naive_now = datetime.now(timezone.utc).replace(tzinfo=None)
     convo = ConversationCreate(
         agent_id=agent.id,
-        title=request.title
+        title=request.title,
+        created_at = naive_now,
     )
 
     x = '_'.join(convo.title.split(' ')[:3])
