@@ -53,7 +53,7 @@ async def list_agents(
 
 @router.get("/{agent_id}", response_model=AgentCreate, description="To get a single agent by ID.")
 async def get_agent(agent_id: str, session: AsyncSessionDep) -> AgentCreate:
-    agent = session.get(AgentCreate, agent_id)
+    agent =await session.get(AgentCreate, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Hero not found")
     return agent
@@ -99,7 +99,7 @@ async def update_agent(agent_id: str, agent_update: AgentUpdate, session: AsyncS
 
 @router.delete("/{agent_id}", description="To delete an agent.")
 async def delete_agent(agent_id: str, session: AsyncSessionDep):
-    agent = session.get(AgentCreate, agent_id)
+    agent = await session.get(AgentCreate, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Hero not found")
     session.delete(agent)

@@ -1,14 +1,29 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 import uuid
+import random
 from sqlmodel import SQLModel
 
 # --------------------
 # Data Models
 # --------------------
 
+class UserCreate(BaseModel):
+    user_name: Optional[str] = Field(default_factory=lambda: f"dear_guest_{str(uuid.uuid4())}"[:24])
+    password: str
+    email: Optional[EmailStr] = None
+
+class UserRead(BaseModel):
+    id: str
+    user_name: str
+    email: Optional[EmailStr] = None
+
+class UserUpdate(BaseModel):
+    user_name: str
+    password: str
+    email: Optional[EmailStr] = None
 
 class Agent(BaseModel):
     name: str
@@ -27,8 +42,7 @@ class AgentRead(BaseModel):
     systemPrompt: str
     creativity: float
 
-    class Config:
-        orm_mode = True
+   
 
 class AgentUpdate(BaseModel):
     name: Optional[str] = None
@@ -51,24 +65,24 @@ class Conversation(BaseModel):
     title: str
     total_tokens: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    class Config:
-        orm_mode = True
+    user_id: str
+   
 
 class ConversationRead(BaseModel):
     id: str
+    user_id: str
     agent_id: str
     title: str
     total_tokens: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
 
 
 class NewConversationRequest(BaseModel):
-    # agent_id: str
+    agent_id: str = "68a896aa-65b3-459e-a419-30aa1aa2706e"
     title: str
+    user_id: str
+    
 
 
 

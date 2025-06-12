@@ -296,7 +296,7 @@ async def get_nice_guidance(query: str) -> str:
         str: The guidance for the given topic.
     """
 
-    # TODO: expand this to other guidance sources, using urls dict above
+    # expand this to other guidance sources, using urls dict above
 
     query = f"site:{urls['NICE']} {query}"
     results = await search_web(query)

@@ -1,11 +1,3 @@
-# import asyncio
-# import sys
-# if sys.platform == "win32":
-#     # Required for Windows async subprocess support
-#     asyncio.set_event_loop_policy(
-#         asyncio.WindowsProactorEventLoopPolicy()
-#     )
-
 from fastapi_mcp import FastApiMCP
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
@@ -19,7 +11,7 @@ from persistDB import init_db
 import asyncio
 from langchain_mcp_adapters.client import MultiServerMCPClient
 # from get_tools_list import load_tools
-
+from users import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,5 +42,6 @@ app.add_middleware(
 
 # app.include_router(agents_0_router, prefix="/agents_0", tags=["Agents_0"])
 app.include_router(agents_router, prefix="/agents", tags=["Agents"])
+app.include_router(auth_router, prefix="/auth", tags=["Users"])
 app.include_router(conversations_router, prefix="/conversations", tags=["Conversations"])
 app.include_router(files_router, prefix="/conversations", tags=["Files"])
