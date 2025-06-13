@@ -34,6 +34,7 @@ app.add_middleware(
         "http://localhost:3000",  # Next.js frontend
         "http://127.0.0.1:3000",  # Just in case browser treats this differently
         "https://nextjs-agentic-app.vercel.app",
+        "https://nextjs-agentic-app.vercel.app/chat",
     ],
     allow_credentials=True,
     allow_methods=["*"],
