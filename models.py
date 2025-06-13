@@ -64,7 +64,7 @@ class Conversation(BaseModel):
     agent_id: str
     title: str
     total_tokens: int = 0
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.utcnow())
     user_id: str
    
 
