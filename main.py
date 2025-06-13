@@ -31,15 +31,15 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # Next.js frontend
-        "http://127.0.0.1:3000",  # Just in case browser treats this differently
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "https://nextjs-agentic-app.vercel.app",
-        "https://nextjs-agentic-app.vercel.app/chat",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # app.include_router(agents_0_router, prefix="/agents_0", tags=["Agents_0"])
 app.include_router(agents_router, prefix="/agents", tags=["Agents"])
