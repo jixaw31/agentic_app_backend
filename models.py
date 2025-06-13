@@ -93,5 +93,5 @@ class FileMeta(BaseModel):
     conversation_id: str
     filename: str
     content_type: str
-    upload_time: datetime = Field(default_factory=datetime.now(timezone.utc))
+    upload_time: datetime = Field(default_factory=lambda: datetime.utcnow())
     size: int
